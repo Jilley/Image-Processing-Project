@@ -3,18 +3,18 @@ import matplotlib.pyplot as plt
 import tifffile
 from scipy.fft import dctn, idctn
 
-#X = dctn(img, type=2, norm="ortho")      # orthonormal 2D DCT-II
-#img_rec = idctn(X, type=2, norm="ortho") # inverse
+def pad_to_multiple(img, block_size):
+    x_length, y_length = img.shape
+    pad_x = (-x_length) % block_size
+    pad_y = (-y_length) % block_size
+    return np.pad(img, ((0, pad_x), (0, pad_y)), mode="edge")
 
-def compress_block(img):
+def compress_block(img, k=8):
     X = dctn(img, type=2, norm="ortho")
 
-    k = 8
     flat = np.abs(X).ravel()
-    idx = np.argpartition(flat, -k)[-k:]          # unordered top-k, O(N)
-    idx = idx[np.argsort(flat[idx])[::-1]]        # sort descending
-    k1, k2 = np.unravel_index(idx, X.shape)       # frequency indices
-    coeffs = X[k1, k2]                            # signed values
+    idx = np.argpartition(flat, -k)[-k:]
+    k1, k2 = np.unravel_index(idx, X.shape)
 
     X_sparse = np.zeros_like(X)
     X_sparse[k1, k2] = X[k1, k2]
@@ -22,41 +22,39 @@ def compress_block(img):
 
     return img_approx
 
-def compress_image(file_path, plotting = False):
-    img = tifffile.imread(file_path)   # np.ndarray, shape (H, W)
+def compress_image(file_path, block_size=8, k=8, plotting=False):
+    img = tifffile.imread(file_path)
+    x_length, y_length = img.shape
 
-    x_length = img.shape[0]
-    y_length = img.shape[1]
+    img_padded = pad_to_multiple(img, block_size)
+    x_padded, y_padded = img_padded.shape
 
-    block_size = 8
-    if (x_length % block_size) != 0 or (y_length % block_size) != 0:
-        raise Exception("Image size not divisable by ", block_size)
+    x_blocks = x_padded // block_size
+    y_blocks = y_padded // block_size
 
-    x_blocks = int(x_length / block_size)
-    y_blocks = int(y_length / block_size)
-
-    blocks = img.reshape(x_blocks, block_size, y_blocks, block_size).swapaxes(1, 2)
+    blocks = img_padded.reshape(x_blocks, block_size, y_blocks, block_size).swapaxes(1, 2)
 
     approx_blocks = np.zeros(blocks.shape, dtype=np.float64)
     for i in range(x_blocks):
         for j in range(y_blocks):
-            approx_blocks[i, j] = compress_block(blocks[i, j])
+            approx_blocks[i, j] = compress_block(blocks[i, j], k=k)
 
-    img_approx = approx_blocks.swapaxes(1, 2).reshape(x_length, y_length)
+    img_approx_padded = approx_blocks.swapaxes(1, 2).reshape(x_padded, y_padded)
+    img_approx = img_approx_padded[:x_length, :y_length]   # crop back to original size
 
     img_approx_clipped = np.clip(img_approx, 0, 255)
 
-    if plotting == True:
+    if plotting:
         fig, ax = plt.subplots(1, 2, figsize=(10, 5))
         ax[0].imshow(img, cmap="gray", vmin=0, vmax=255)
         ax[0].set_title("Original")
         ax[1].imshow(img_approx_clipped, cmap="gray", vmin=0, vmax=255)
-        ax[1].set_title("Top 8 of 64 coeffs per block")
+        ax[1].set_title(f"Top {k} of {block_size*block_size} coeffs per block")
         for a in ax:
             a.axis("off")
         plt.tight_layout()
         plt.show()
 
-compress_image("bilder/rice.tif")
-                    
+    return img_approx_clipped
 
+compress_image("bilder/ngc4024l.tif", plotting=True)
