@@ -1,45 +1,53 @@
-%% First stage
-clear; clc; close all
+%%
 
-image = im2double(imread('bilder/cameraman.tif'));  % load image
-imshow(image)   % show image
+clear; clc; close all;
 
-block_size = 8;
+% Function to compress one block
+function img_approx = compress_block(block, k)
 
-len_x = size(image, 2);   % number of columns: 256
-len_y = size(image, 1);   % number of rows: 256
+    DCT_coeff = dct2(block);    % Pixles --> DCT coefficients
 
-number_boxes_x = len_x/block_size;
-number_boxes_y = len_y/block_size;
+    [~, idx] = sort(abs(DCT_coeff(:)), 'descend');  % sort coefficients
+    idx = idx(1:k); % Index of k largest coefficients
 
-x_starts = zeros(number_boxes_x);
-y_starts = zeros(number_boxes_y);
+    new_block = zeros(size(DCT_coeff));     % Make matrix of zeroes 
+    new_block(idx) = DCT_coeff(idx);        % Set top k pixles to original values, rest to 0
 
-for i = 1:number_boxes_x
-    index = (i-1)*block_size + 1;
-    x_starts(i) = index;
+    img_approx = idct2(new_block);      % Reverse DCT transform
 end
 
-for i = 1:number_boxes_y
-    index = (i-1)*block_size + 1;
-    y_starts(i) = index;
+
+% image_file = 'bilder/rice.tif'
+% blocksize = size of each block
+% k = Number of DCT coeff to save per block
+
+function compress_img(image_file, blocksize, k)    % Function to compress image
+
+    img = im2double(imread(image_file));     % read image and normalize
+    
+    % Check that image is grayscale and divisable by blocksize
+    assert(ismatrix(img), 'Input must be a grayscale image.'); 
+    assert(all(mod(size(img), blocksize) == 0), sprintf('Image size not divisable by %d.',blocksize));  
+    
+    % Process every block and put output image together
+    img_approx = blockproc(img, [blocksize blocksize], @(block) compress_block(block.data, k));
+    
+    % Clip reconstructed values to the image range
+    img_approx_clipped = min(max(img_approx, 0), 1);
+    
+    % Plot images
+    figure
+
+    subplot(1, 2, 1);
+    imshow(img, [0 1]);
+    title('Original');
+    
+    subplot(1, 2, 2);
+    imshow(img_approx_clipped, [0 1]);
+    title(sprintf('DCT with %d blocks, top %d coeff/block', blocksize, k));
 end
 
-number_boxes = number_boxes_x * number_boxes_y;
-
-
-[height, width] = size(image);
-
-% Pad the right and bottom so arbitrary image sizes work
-padded_height = ceil(height / block_size) * block_size;
-padded_width  = ceil(width  / block_size) * block_size;
-
-I_padded = zeros(padded_height, padded_width);
-I_padded(1:height, 1:width) = image;
-
-blocks = mat2cell(I_padded, ...
-    repmat(block_size, 1, padded_height / block_size), ...
-    repmat(block_size, 1, padded_width  / block_size));
-
-% Example: the block in row 1, column 2
-imshow(blocks{1, 2});
+image_file = 'bilder/cameraman.tif';
+blocksize = 8; 
+k = 8;
+compress_img(image_file, blocksize, k)
